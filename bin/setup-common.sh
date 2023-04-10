@@ -25,6 +25,8 @@ if [[ (-z ${SPARKJOB_HOST+X}) && ($NEED_HOST == 1) ]];then
 		declare -x SPARKJOB_HOST=arcticus
 	elif [[ $host =~ .*yarrow* ]];then
 		declare -x SPARKJOB_HOST=yarrow
+	elif [[ $host =~ .*b0n0 ]];then
+		declare -x SPARKJOB_HOST=sunspot
 	else
 		echo "unsupported host, $host. expect either arcticus or yarrow host"
 		exit 1

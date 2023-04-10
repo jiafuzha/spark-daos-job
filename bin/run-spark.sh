@@ -13,7 +13,7 @@ fi
 [[ -z ${SPARKJOB_SEPARATE_MASTER+X} ]] && declare -i SPARKJOB_SEPARATE_MASTER=0
 
 if ((SPARKJOB_SEPARATE_MASTER>0));then
-	grep -v "$(hostname)" "$SPARK_CONF_DIR/nodes" > "$SPARK_CONF_DIR/slaves"
+	grep -v "$(hostname -f)" "$SPARK_CONF_DIR/nodes" > "$SPARK_CONF_DIR/slaves"
 else
 	cp -a "$SPARK_CONF_DIR/nodes" "$SPARK_CONF_DIR/slaves"
 fi
@@ -41,6 +41,7 @@ ssh(){	# Intercept ssh call to pass more envs.  Requires spark using bash.
 		SPARKJOB_OUTPUT_DIR='$SPARKJOB_OUTPUT_DIR' ; 
 		SPARKJOB_WORKING_DIR='$SPARKJOB_WORKING_DIR' ;  
 		SPARKJOB_OAPML='$SPARKJOB_OAPML' ;
+		SPARKJOB_DAOS='$SPARKJOB_DAOS' ;
 		source '$SPARKJOB_SCRIPTS_DIR/setup.sh' ; 
 		${cs[@]} \""
 	#	>>'$SPARKJOB_WORKING_DIR/ssh.$h.output' 
@@ -73,13 +74,19 @@ if (($#==0));then
 	exit 0
 fi
 
+echo "first arg is #$1#"
+
 # We have jobs to submit
 # source "$SPARKJOB_SCRIPTS_DIR/setup.sh"
 if ((SPARKJOB_SCRIPTMODE>0));then
-	"$@"
+	script=$(to_abs_path_if_nc $1)
+	echo "running script $script"
+	$script "${@:2}"
 elif [[ $1 == run-example ]];then
+	echo "running spark example ${@:2}"
 	"$SPARK_HOME/bin/run-example" --master $SPARK_MASTER_URI $GPU_OPTIONS "${@:2}"
 else	
+	echo "submitting spark job $@"
 	"$SPARK_HOME/bin/spark-submit" --master $SPARK_MASTER_URI $GPU_OPTIONS "$@"
 fi
 
@@ -145,6 +152,8 @@ if ((SPARKJOB_INTERACTIVE>0));then
 	count=1
 	while ((count>0));do
 		[[ ! -d $SPARKJOB_OUTPUT_DIR/$SPARKJOB_JOBID/loggedin ]] && break
+		sleep 1
+		echo "waiting user exiting"
 	done
 
 fi

@@ -12,7 +12,7 @@ SPARKJOB_FILES=
 if ((SPARKJOB_OAPML>0)); then
 	SPARKJOB_FILES=${SPARKJOB_ADD_JARS//:/,}	
 	# GPU options. variables defined in env_<node>.sh
-    	OPTIONS="--conf spark.oap.mllib.useGPU=true"
+    	OPTIONS="--conf spark.oap.mllib.device=GPU"
         export GPU_OPTIONS=$OPTIONS
         echo "GPU Options: $GPU_OPTIONS"
 fi
@@ -26,28 +26,25 @@ event_log_dir=$SPARKJOB_CONFIG_DIR/event_logs
 # The parameters here may require tuning depending on the machine and workload.
 [[ -s $SPARK_CONF_DIR/spark-defaults.conf ]] ||
 	cat > "$SPARK_CONF_DIR/spark-defaults.conf" <<EOF
-spark.executor.cores        9
-spark.driver.memory        5g
-spark.executor.memory        80g
+spark.executor.cores                 34
+spark.driver.memory                  20g
+spark.executor.memory                150g
+spark.executor.instances             12
 
-spark.worker.resourcesFile	$GPU_RESOURCE_FILE
-spark.worker.resource.gpu.amount	$GPU_WORKER_AMOUNT
-spark.executor.resource.gpu.amount	1
-spark.task.resource.gpu.amount		0.01
+spark.worker.resourcesFile	     $GPU_RESOURCE_FILE
+spark.worker.resource.gpu.amount     $GPU_WORKER_AMOUNT
+spark.executor.resource.gpu.amount   1
+spark.task.resource.gpu.amount	     0.01
 
 spark.driver.extraJavaOptions        -XX:+UseG1GC
-spark.executor.extraJavaOptions        -XX:+UseG1GC
+spark.executor.extraJavaOptions      -XX:+UseG1GC
 
-spark.files	$SPARKJOB_FILES	
-spark.executor.extraClassPath	$SPARKJOB_CONFIG_DIR:$SPARKJOB_ADD_JARS
-spark.driver.extraClassPath   $SPARKJOB_CONFIG_DIR:$SPARKJOB_ADD_JARS
+spark.executor.extraClassPath	     $SPARKJOB_CONFIG_DIR:$SPARKJOB_ADD_JARS
+spark.driver.extraClassPath          $SPARKJOB_CONFIG_DIR:$SPARKJOB_ADD_JARS
 
-spark.shuffle.manager=org.apache.spark.shuffle.daos.DaosShuffleManager
-spark.shuffle.daos.pool.uuid		pool0
-spark.shuffle.daos.container.uuid	cont2
 
-spark.eventLog.enabled=true
-spark.eventLog.dir=file://$event_log_dir
+spark.eventLog.enabled               true
+spark.eventLog.dir                   file://$event_log_dir
 
 EOF
 

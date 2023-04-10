@@ -6,7 +6,7 @@ set -u
 	declare SPARKJOB_SCRIPTS_DIR="$(cd $(dirname "$0")&&pwd)"
 
 declare -r configdir="$(pwd)"
-declare -r version='Spark DAOS Job  v1.0.3'
+declare -r version='Spark DAOS Job  v1.0.3 for Sunspot'
 declare -r usage="$version"'
 
 Usage:
@@ -19,35 +19,53 @@ JOBFILE can be:
 	shell-script.sh			when option "-s" is specified
 
 Required options:  
-	-t WALLTIME		Max run time in minutes
-	-n NODES		Job node count
+	-l walltime=<v>		Max run time, e.g., -l walltime=30:00 for running 30 minutes at most
+	-l select=<v>		Job node count, e.g., -l select=2 for requesting 2 nodes
 	-q QUEUE		Queue name
 
-Optional options:
+	Optional options:
 	-A PROJECT		Allocation name
 	-o OUTPUTDIR		Directory for job output files (default: current dir)
-	-s			Enable script mode
-	-m			Master uses a separate node
+	-s			Enable shell script mode
+	-y			Spark master uses a separate node
 	-I			Start an interactive ssh session
-	-w WAITTIME		Time to wait for prompt in minutes (default: 30)
 	-b			Prefer Spark built-in mllib to default OAP mllib 
+	-n			Run without DAOS loaded
 	-h			Print this help messages
 Example:
-	submit-spark.sh -t 60 -n 2 -q arcticus dense_kmeans_example.py daos://pool0/cont1/kmeans/input/libsvm 10
-	submit-spark.sh -t 30 -n 1 -q arcticus -o output-dir run-example SparkPi
-	submit-spark.sh -I -t 30 -n 2 -q arcticus --class com.intel.jlse.ml.KMeansExample example/jlse-ml-1.0-SNAPSHOT.jar daos://pool0/cont1/kmeans/input/csv csv 10
-	submit-spark.sh -t 30 -n 1 -q arcticus -s example/test_script.sh job.log
+	submit-spark.sh -A Aurora_deployment -l walltime=60 -l select=2 -q workq dense_kmeans_example.py daos://pool0/cont1/kmeans/input/libsvm 10
+	submit-spark.sh -A Aurora_deployment -l walltime=30 -l select=1 -q workq -o output-dir run-example SparkPi
+	submit-spark.sh -A Aurora_deployment -I -l walltime=30 -l select=2 -q workq --class com.intel.jlse.ml.KMeansExample example/jlse-ml-1.0-SNAPSHOT.jar daos://pool0/cont1/kmeans/input/csv csv 10
+	submit-spark.sh -A Aurora_deployment -l walltime=30 -l select=1 -q workq -s example/test_script.sh job.log
 '
 
-while getopts :hmsIbA:t:n:q:w:p:o: OPT; do
+declare -A resources
+
+add_resource()
+{
+        old_ifs=$IFS
+        IFS='='
+        a=($1)
+        IFS=$old_ifs
+        al=${#a[@]}
+        if ((al!=2));then
+                echo "bad resource, $1"
+        else
+                resources[${a[0]}]=${a[1]}
+        fi
+}
+
+
+while getopts :hysIbnA:l:w:q:o: OPT; do
 	case $OPT in
 	A)	declare -r	allocation="$OPTARG";;
-	t)	declare -r	time="$OPTARG";;
+	l)	add_resource "$OPTARG";;
 	s)	declare -ir	scriptMode=1;;
-	n)	declare -r	nodes="$OPTARG";;
+	l)	declare -r	add_resource "$OPTARG";;
 	q)	declare -r	queue="$OPTARG";;
 	o)	declare -r	outputdir="$OPTARG";;
-	m)	declare -ir	separate_master=1;;
+	y)	declare -ir	separate_master=1;;
+	n)	declare -ir	no_daos=1;;
 	w)	declare -ir	waittime=$((OPTARG*60));;
 	b)	declare -ir	oapml=0;;
 	I)	declare -ir	interactive=1;;
@@ -70,6 +88,12 @@ done
 [[ -z ${outputdir+X} ]] && declare -r outputdir=.
 [[ -z ${separate_master+X} ]] && declare -ir separate_master=0
 [[ -z ${oapml+X} ]] && declare -ir oapml=1 
+[[ -z ${no_daos+X} ]] && declare -ir no_daos=0
+
+key_time="walltime"
+key_node="select"
+[[ -z ${resources[$key_time]+X} ]] || declare -r time=${resources[$key_time]}
+[[ -z ${resources[$key_node]+X} ]] || declare -r nodes=${resources[$key_node]}
 
 if [[ -z ${time+X} || -z ${nodes+X} || -z ${queue+X} ]];then
 	echo "$usage"
@@ -102,32 +126,35 @@ declare SPARKJOB_INTERACTIVE=$interactive
 declare SPARKJOB_SCRIPTMODE=$scriptMode
 declare SPARKJOB_SEPARATE_MASTER=$separate_master
 declare SPARKJOB_OAPML=$oapml
+if [ "$no_daos" -eq 0 ];then
+	declare -i SPARKJOB_DAOS=1
+else
+	declare -i SPARKJOB_DAOS=0
+fi
 
-declare -i SPARKJOB_JOBID=0
+declare SPARKJOB_JOBID=
+declare SPARKJOB_ARG="${scripts[@]}"
 mysubmit() {
 	# Options to pass to qsub
+	#--attrs 'enable_ssh=1'
+	env_vars="SPARKJOB_SCRIPTS_DIR=$SPARKJOB_SCRIPTS_DIR","SPARKJOB_CONFIG_DIR=$SPARKJOB_CONFIG_DIR","SPARKJOB_INTERACTIVE=$SPARKJOB_INTERACTIVE","SPARKJOB_SCRIPTMODE=$SPARKJOB_SCRIPTMODE","SPARKJOB_OUTPUT_DIR=$SPARKJOB_OUTPUT_DIR","SPARKJOB_SEPARATE_MASTER=$SPARKJOB_SEPARATE_MASTER","SPARKJOB_OAPML=$SPARKJOB_OAPML","SPARKJOB_DAOS=$SPARKJOB_DAOS","SPARKJOB_ARG=$SPARKJOB_ARG"
+	env_vars=${env_vars// /^}
+
 	local -a opt=(
-		--attrs 'enable_ssh=1'
-		-n $nodes -t $time -q $queue
-		--env "SPARKJOB_SCRIPTS_DIR=$SPARKJOB_SCRIPTS_DIR"
-		--env "SPARKJOB_CONFIG_DIR=$SPARKJOB_CONFIG_DIR"
-		--env "SPARKJOB_INTERACTIVE=$SPARKJOB_INTERACTIVE"
-		--env "SPARKJOB_SCRIPTMODE=$SPARKJOB_SCRIPTMODE"
-		--env "SPARKJOB_OUTPUT_DIR=$SPARKJOB_OUTPUT_DIR"
-		--env "SPARKJOB_SEPARATE_MASTER=$SPARKJOB_SEPARATE_MASTER"
-		--env "SPARKJOB_OAPML=$SPARKJOB_OAPML"
-		-O "$SPARKJOB_OUTPUT_DIR/\$jobid"
-		"$SPARKJOB_SCRIPTS_DIR/start-spark.sh"
+		-l "select=$nodes" -l "walltime=$time" -q $queue
+		-v $env_vars
+		-o "$SPARKJOB_OUTPUT_DIR"
+		-e "$SPARKJOB_OUTPUT_DIR"
 	)
 
-	if ((${#scripts[@]}>0));then
-		opt+=("${scripts[@]}")
-	fi
 	[[ ! -z ${allocation+X} ]] && opt=(-A $allocation "${opt[@]}")
+	opt+=("$SPARKJOB_SCRIPTS_DIR/start-spark.sh")
 
 	SPARKJOB_JOBID=$(qsub "${opt[@]}")
+	echo "debug $SPARKJOB_JOBID"
+	echo "debug ${opt[@]}"
 	export SPARKJOB_JOBID
-	if ((SPARKJOB_JOBID > 0));then
+	if [[ ! -z $SPARKJOB_JOBID ]];then
 		echo "# Submitted"
 		echo "SPARKJOB_JOBID=$SPARKJOB_JOBID"
 	else
@@ -137,18 +164,19 @@ mysubmit() {
 }
 
 if ((interactive>0)); then
-	cleanup(){ ((SPARKJOB_JOBID>0)) && qdel $SPARKJOB_JOBID; }
+	cleanup(){ [[ ! -z $SPARKJOB_JOBID ]] && qdel $SPARKJOB_JOBID; }
 	trap cleanup 0
 	mysubmit
 	declare -i mywait=1 count=0
 	source "$SPARKJOB_SCRIPTS_DIR/setup-common.sh" 0
 	JOB_PATH=$SPARKJOB_OUTPUT_DIR/$SPARKJOB_JOBID
+	ENV_PATH=$JOB_PATH/.spark-env
 	echo "Waiting for Spark to launch by checking $JOB_PATH"
 	for ((count=0;count<waittime;count+=mywait));do
-		[[ ( ! -f $JOB_PATH.error ) && ( ! -f $JOB_PATH.output ) ]] || break
+		[[ ( ! -d $JOB_PATH ) || ( ! -f $ENV_PATH ) ]] || break
 		sleep 1 
 	done
-	[[ -s $SPARKJOB_WORKING_ENVS ]] || SPARKJOB_WORKING_ENVS=$SPARKJOB_OUTPUT_DIR/.spark-env
+	[[ -s $SPARKJOB_WORKING_ENVS ]] || SPARKJOB_WORKING_ENVS=$ENV_PATH
 	if [[ -s $SPARKJOB_WORKING_ENVS ]];then
 		source "$SPARKJOB_WORKING_ENVS"
 		echo "# Spark is now running (SPARKJOB_JOBID=$SPARKJOB_JOBID) on:"
@@ -163,6 +191,7 @@ if ((interactive>0)); then
 			echo SPARKJOB_OUTPUT_DIR=\'$SPARKJOB_OUTPUT_DIR\';
 			echo SPARKJOB_SEPARATE_MASTER=\'$SPARKJOB_SEPARATE_MASTER\';
 			echo SPARKJOB_OAPML=\'$SPARKJOB_OAPML\';
+			echo SPARKJOB_DAOS=\'$SPARKJOB_DAOS\';
 			echo SPARKJOB_CONFIG_DIR=\'$SPARKJOB_CONFIG_DIR\';
 			echo source ~/.bashrc;
 			echo source \'$SPARKJOB_SCRIPTS_DIR/setup.sh\';

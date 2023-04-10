@@ -1,6 +1,4 @@
 # One api
-export ONEAPI_MPICH_OVERRIDE=NONE   
-module use /soft/restricted/CNDA/modulefiles
-module load oneapi
-# module load oneapi/2021.04.30.004
-export SYCL_DEVICE_FILTER=opencl
+module load oneapi/release/2022.12.30.001
+export SYCL_DEVICE_FILTER=level_zero
+export CCL_KERNEL_PATH=/soft/compilers/oneapi/2022.12.30.001/oneapi/ccl/latest/lib/kernels/
